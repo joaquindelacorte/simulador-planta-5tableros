@@ -48,4 +48,15 @@ planta_5tableros.oip  — modelo OIP importable
 
 ## Uso
 
-Abrí `index.html` en cualquier navegador moderno. No requiere servidor.
+Abrí `index.html` en cualquier navegador moderno. No requiere servidor ni dependencias.
+
+### Controles
+
+- `START / S`: enclava K1 e inicia la producción continua.
+- `STOP`: libera K1 al finalizar o interrumpir el ciclo.
+- `E-STOP / Esc`: parada instantánea categoría 0 desde cualquier estado.
+- `RESET`: rearma el sistema después de una emergencia.
+- Selector `METAL / PLÁSTICO`: define la próxima pieza a inspeccionar.
+- Selector `AUTO / MANUAL`: controla la compuerta K2 de T5; en manual permite vaciar una tolva llena.
+
+La tolva suma 25% por pieza metálica. Al llegar a 100%, B1 se activa y bloquea el ingreso de piezas hasta realizar una descarga manual.
