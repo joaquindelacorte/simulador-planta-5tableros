@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Simulador didáctico de una planta automatizada de cinco tableros en cascada.">
+  <title>Planta 5 Tableros | UNP</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark">UNP</span>
+      <div><strong>PLANTA 5×1</strong><small>Automatización Industrial · 2026</small></div>
+    </div>
+    <div class="system-strip">
+      <span id="headerLamp" class="status-dot"></span>
+      <span id="headerStatus">PLANTA DETENIDA</span>
+      <span class="voltage">24 VCC</span>
+    </div>
+  </header>
+
+  <main class="app-shell">
+    <aside class="sidebar control-sidebar" aria-label="Panel de control">
+      <section class="panel control-panel">
+        <div class="panel-heading"><span>01</span><h2>MANDO CENTRAL</h2></div>
+        <div class="console-screen" id="hmiScreen">
+          <span>HMI · T1</span><strong id="hmiText">STANDBY</strong><small id="hmiSubtext">Esperando habilitación</small>
+        </div>
+
+        <div class="command-grid">
+          <button id="startBtn" class="industrial-btn start" type="button"><span class="button-face"></span><b>START</b><small>S2 · NA</small></button>
+          <button id="stopBtn" class="industrial-btn stop" type="button"><span class="button-face"></span><b>STOP</b><small>S1 · NC</small></button>
+        </div>
+        <button id="estopBtn" class="estop" type="button"><span></span><b>EMERGENCY STOP</b><small>S0 · CAT 0</small></button>
+        <button id="resetBtn" class="secondary-btn" type="button">↻ RESET DE SISTEMA</button>
+
+        <div class="control-group">
+          <label>TIPO DE PIEZA</label>
+          <div class="segmented" id="pieceSelector" role="group" aria-label="Tipo de pieza">
+            <button class="active" data-piece="METAL" type="button">METAL</button>
+            <button data-piece="PLASTICO" type="button">PLÁSTICO</button>
+          </div>
+        </div>
+
+        <div class="control-group switch-row">
+          <div><label for="modeSwitch">DESCARGA T5</label><small id="modeLabel">MODO AUTOMÁTICO</small></div>
+          <label class="switch"><input id="modeSwitch" type="checkbox" checked><span></span></label>
+        </div>
+        <button id="dischargeBtn" class="secondary-btn" type="button" disabled>ABRIR COMPUERTA K2</button>
+      </section>
+
+      <section class="panel log-panel">
+        <div class="panel-heading"><span>LOG</span><h2>EVENTOS</h2><button id="clearLogBtn" type="button">LIMPIAR</button></div>
+        <ol id="eventLog" aria-live="polite"></ol>
+      </section>
+    </aside>
+
+    <section class="workspace">
+      <div class="workspace-title">
+        <div><span class="eyebrow">VISTA GENERAL / FLUJO T1 → T4 → T2 → T3 → T5</span><h1>Línea de producción automatizada</h1></div>
+        <div class="cycle-state"><small>ESTADO DEL CICLO</small><strong id="cycleState">IDLE</strong></div>
+      </div>
+
+      <section class="plant-card" aria-label="Animación de planta">
+        <svg id="plantSvg" viewBox="0 0 1280 470" role="img" aria-labelledby="plantTitle plantDesc">
+          <title id="plantTitle">Planta industrial de cinco estaciones</title>
+          <desc id="plantDesc">Pupitre, cinta de ingreso, inspección, prensa neumática y tolva conectados en cascada.</desc>
+          <defs>
+            <linearGradient id="floorGrad" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#111c2f"/><stop offset="1" stop-color="#080e19"/></linearGradient>
+            <linearGradient id="steel" x1="0" y1="0" x2="1" y2="0"><stop stop-color="#65758c"/><stop offset=".5" stop-color="#cad2dc"/><stop offset="1" stop-color="#4d5b6e"/></linearGradient>
+            <linearGradient id="belt" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#39465b"/><stop offset="1" stop-color="#151e2d"/></linearGradient>
+            <pattern id="beltPattern" width="30" height="18" patternUnits="userSpaceOnUse"><rect width="30" height="18" fill="url(#belt)"/><path d="M29 0v18" stroke="#65758a" stroke-width="2"/></pattern>
+            <filter id="greenGlow"><feGaussianBlur stdDeviation="5" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+            <filter id="redGlow"><feGaussianBlur stdDeviation="4" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+          </defs>
+          <rect width="1280" height="470" fill="url(#floorGrad)"/>
+          <path d="M0 390H1280M0 430H1280" class="floor-line"/><path d="M80 350L10 470M250 350L200 470M420 350L390 470M600 350L590 470M780 350L790 470M960 350L990 470M1140 350L1190 470" class="floor-line faint"/>
+
+          <g class="interconnects">
+            <path id="wire1" class="signal-wire" d="M205 118 C250 70 275 70 330 98"/><path id="wire2" class="signal-wire" d="M510 98 C550 70 575 70 625 98"/><path id="wire3" class="signal-wire" d="M800 98 C840 70 865 70 915 98"/><path id="wire4" class="signal-wire" d="M1085 98 C1120 70 1150 70 1180 112"/>
+            <path class="ground-wire" d="M180 140 C400 35 910 35 1200 135"/>
+          </g>
+
+          <g id="stationT1" class="station" transform="translate(28 90)">
+            <rect class="station-back" x="0" y="0" width="195" height="252" rx="8"/>
+            <text class="station-code" x="16" y="26">T1</text><text class="station-name" x="56" y="24">MANDO CENTRAL</text>
+            <rect class="cabinet" x="25" y="52" width="145" height="135" rx="5"/>
+            <rect class="screen" x="48" y="72" width="100" height="48" rx="3"/><text id="svgHmi" class="screen-text" x="98" y="101">STANDBY</text>
+            <circle id="lampH1" class="lamp green" cx="52" cy="145" r="10"/><circle id="lampH2" class="lamp red active" cx="84" cy="145" r="10"/>
+            <circle class="push green" cx="124" cy="145" r="12"/><circle class="push red" cx="154" cy="145" r="12"/>
+            <g class="tower" transform="translate(93 32)"><rect x="-5" y="0" width="10" height="20"/><circle class="tower-red" cx="0" cy="-7" r="7"/><circle class="tower-yellow" cx="0" cy="-21" r="7"/><circle class="tower-green" cx="0" cy="-35" r="7"/></g>
+            <rect class="relay" x="47" y="201" width="100" height="32" rx="3"/><text x="97" y="221" class="component-label">K1 · AUTORRET.</text>
+            <text class="station-footer" x="97" y="278">STATION 1</text>
+          </g>
+
+          <g id="stationT4" class="station" transform="translate(270 90)">
+            <rect class="station-back" width="285" height="252" rx="8"/>
+            <text class="station-code" x="16" y="26">T4</text><text class="station-name" x="56" y="24">CINTA DE INGRESO</text>
+            <rect class="small-panel" x="18" y="52" width="68" height="74" rx="4"/><circle class="lamp green station-power" cx="36" cy="73" r="6"/><rect class="relay" x="31" y="91" width="42" height="24"/><text class="tiny-label" x="52" y="107">K1</text>
+            <rect class="belt" x="28" y="158" width="232" height="48" rx="14"/>
+            <g class="belt-rollers"><circle cx="47" cy="182" r="13"/><circle cx="241" cy="182" r="13"/></g>
+            <rect id="partT4" class="part hidden" x="50" y="164" width="34" height="22" rx="4"/>
+            <g transform="translate(137 126)"><rect class="sensor" x="-12" y="0" width="24" height="38" rx="3"/><circle cx="0" cy="10" r="5" fill="#ff3b55"/><text class="tiny-label" x="0" y="-7">IFM O5P701</text></g>
+            <rect class="reflector" x="207" y="126" width="18" height="35"/><path id="opticalBeam" class="optical-beam" d="M149 145H207"/>
+            <text class="component-label" x="144" y="229">B2 INDUCTIVO · X3 / X5</text><text class="station-footer" x="142" y="278">STATION 2</text>
+          </g>
+
+          <g id="stationT2" class="station" transform="translate(575 90)">
+            <rect class="station-back" width="275" height="252" rx="8"/>
+            <text class="station-code" x="16" y="26">T2</text><text class="station-name" x="56" y="24">INSPECCIÓN / SORT</text>
+            <rect class="small-panel" x="18" y="52" width="62" height="77" rx="4"/><circle id="sortGreen" class="lamp green" cx="35" cy="72" r="6"/><circle id="sortYellow" class="lamp yellow" cx="60" cy="72" r="6"/><rect class="relay" x="28" y="91" width="42" height="26"/><text class="tiny-label" x="49" y="108">3×RJ2S</text>
+            <rect class="belt" x="25" y="158" width="225" height="48" rx="14"/><rect id="partT2" class="part hidden" x="55" y="164" width="34" height="22" rx="4"/>
+            <g id="pusher" class="pusher" transform="translate(148 126)"><rect x="0" y="0" width="62" height="14" rx="3"/><rect x="50" y="-8" width="18" height="30" rx="2"/></g>
+            <path class="discard-chute" d="M195 205l28 37h-64l17-37"/><text class="tiny-label" x="191" y="249">DESCARTE</text>
+            <g class="sensors"><circle cx="101" cy="148" r="7"/><circle cx="123" cy="148" r="7"/><text class="tiny-label" x="112" y="135">B1 / B2</text></g>
+            <text class="station-footer" x="137" y="278">STATION 3</text>
+          </g>
+
+          <g id="stationT3" class="station" transform="translate(870 90)">
+            <rect class="station-back" width="235" height="252" rx="8"/>
+            <text class="station-code" x="16" y="26">T3</text><text class="station-name" x="56" y="24">PRENSA / TALADRO</text>
+            <path class="safety-cage" d="M24 205V56H205V205M24 72H205M48 56v149M181 56v149"/>
+            <g id="drillHead" class="drill" transform="translate(113 69)"><rect x="-25" y="0" width="50" height="54" rx="5"/><rect x="-7" y="54" width="14" height="38"/><path d="M-8 92L0 109L8 92Z"/></g>
+            <rect class="workpiece" x="82" y="183" width="62" height="14" rx="2"/><circle id="fc1" class="limit-switch active" cx="161" cy="82" r="7"/><circle id="fc2" class="limit-switch" cx="161" cy="174" r="7"/><text class="tiny-label" x="181" y="85">FC1</text><text class="tiny-label" x="181" y="177">FC2</text>
+            <path class="pneumatic" d="M75 70V45H191"/>
+            <text class="station-footer" x="117" y="278">STATION 4</text>
+          </g>
+
+          <g id="stationT5" class="station" transform="translate(1125 90)">
+            <rect class="station-back" width="135" height="252" rx="8"/>
+            <text class="station-code" x="12" y="26">T5</text><text class="station-name compact" x="49" y="24">TOLVA</text>
+            <path class="hopper-shell" d="M28 64Q67 42 106 64V147L82 181H52L28 147Z"/>
+            <clipPath id="hopperClip"><path d="M31 67Q67 48 103 67V145L80 177H54L31 145Z"/></clipPath>
+            <rect id="hopperLevel" class="hopper-level" x="30" y="177" width="74" height="0" clip-path="url(#hopperClip)"/>
+            <ellipse cx="67" cy="65" rx="39" ry="12" class="hopper-rim"/>
+            <circle id="levelSensor" class="level-sensor" cx="104" cy="91" r="6"/><text class="tiny-label" x="66" y="98">B1 NIVEL</text>
+            <g id="gate" class="gate" transform="translate(67 183)"><rect x="-25" y="0" width="50" height="10" rx="2"/><path d="M0 10v25"/></g>
+            <text id="fullLabel" class="full-label" x="67" y="128">LEVEL OK</text><text class="tiny-label" x="67" y="226">K2 DESCARGA</text><text class="station-footer" x="67" y="278">STATION 5</text>
+          </g>
+
+          <g id="movingPart" class="moving-part hidden"><rect x="-18" y="-11" width="36" height="22" rx="4"/><path d="M-10-4h20M-10 2h20"/></g>
+          <g class="flow-labels"><text x="242" y="60">+24V LÍNEA</text><text x="536" y="60">PIEZA PRESENTE</text><text x="824" y="60">MATERIAL VÁLIDO</text><text x="1092" y="60">PROCESO OK</text></g>
+        </svg>
+        <div class="legend"><span><i class="legend-line live"></i>Señal activa +24V</span><span><i class="legend-line"></i>Señal inactiva</span><span><i class="legend-ground"></i>GND 0V común</span></div>
+      </section>
+
+      <section class="ladder-card">
+        <div class="section-heading"><div><span class="eyebrow">LÓGICA DE RELÉS</span><h2>Diagrama Ladder en tiempo real</h2></div><span class="live-badge"><i></i> MONITOREO ONLINE</span></div>
+        <div class="ladder" id="ladderDiagram" aria-label="Diagrama ladder de ocho rungs"></div>
+      </section>
+    </section>
+
+    <aside class="sidebar status-sidebar" aria-label="Panel de estado">
+      <section class="panel state-panel">
+        <div class="panel-heading"><span>IO</span><h2>SEÑALES DE CAMPO</h2></div>
+        <div id="signalList" class="signal-list"></div>
+      </section>
+      <section class="panel counters-panel">
+        <div class="panel-heading"><span>Σ</span><h2>PRODUCCIÓN</h2></div>
+        <div class="counter"><span class="counter-icon metal">M</span><div><strong id="metalCount">0</strong><small>METALES PROCESADOS</small></div></div>
+        <div class="counter"><span class="counter-icon plastic">P</span><div><strong id="plasticCount">0</strong><small>PLÁSTICOS DESCARTADOS</small></div></div>
+        <div class="counter"><span class="counter-icon cycles">✓</span><div><strong id="cycleCount">0</strong><small>CICLOS COMPLETOS</small></div></div>
+      </section>
+      <section class="panel silo-panel">
+        <div class="panel-heading"><span>T5</span><h2>NIVEL DE TOLVA</h2></div>
+        <div class="level-readout"><strong id="levelValue">0%</strong><span><i id="levelBar"></i></span></div>
+        <p id="siloMessage">Capacidad disponible</p>
+      </section>
+      <section class="safety-note"><strong>PARADA CAT. 0</strong><p>La seta S0 interrumpe instantáneamente toda alimentación y cancela los temporizadores activos.</p></section>
+    </aside>
+  </main>
+  <div id="emergencyOverlay" class="emergency-overlay" aria-hidden="true"><strong>EMERGENCIA</strong><span>S0 ACTIVADO · ALIMENTACIÓN GENERAL INTERRUMPIDA</span></div>
+  <script src="script.js"></script>
+</body>
+</html>
