@@ -9,11 +9,27 @@
   });
 
   const timings = Object.freeze({ conveyorTime: 3000, inspectionTime: 1500, pressAdvanceTime: 2000, pressReturnTime: 1500, storageTime: 1000 });
+  const PATH_METAL = Object.freeze([
+    { x: 290, y: 174, label: 'T4_entrada' },
+    { x: 490, y: 174, label: 'T4_ifm' },
+    { x: 660, y: 174, label: 'T2_entrada' },
+    { x: 720, y: 174, label: 'T2_sensores' },
+    { x: 960, y: 194, label: 'T3_workpiece' },
+    { x: 1160, y: 150, label: 'T5_boca' }
+  ]);
+  const PATH_PLASTIC = Object.freeze([
+    { x: 290, y: 174, label: 'T4_entrada' },
+    { x: 490, y: 174, label: 'T4_ifm' },
+    { x: 660, y: 174, label: 'T2_entrada' },
+    { x: 720, y: 174, label: 'T2_sensores' },
+    { x: 760, y: 270, label: 'T2_descarte' }
+  ]);
   const startedAt = Date.now();
   let state = STATES.IDLE;
   let pieceType = 'METAL';
   let automatic = true;
   let cycleTimer = null;
+  let partAnim = null;
   let siloLevel = 0;
   let counters = { metal: 0, plastic: 0, cycles: 0 };
   let signals = makeIdleSignals();
@@ -84,15 +100,48 @@
     render();
   }
 
-  function setMovingPart(visible, x = 0, y = 0, duration = 0) {
-    ui.part.style.transition = duration ? `transform ${duration}ms linear` : 'none';
-    ui.part.classList.toggle('hidden', !visible);
-    ui.part.style.transform = `translate(${x}px, ${y}px)`;
+  function tweenPart(waypoints, segDurations, onSegmentReached) {
+    if (partAnim) cancelAnimationFrame(partAnim.rafId);
+
+    const part = ui.part;
+    part.classList.remove('hidden');
+    let seg = 0;
+    let segStart = null;
+
+    function frame(timestamp) {
+      if (segStart === null) segStart = timestamp;
+      const duration = segDurations[seg] || 1;
+      const progress = Math.min((timestamp - segStart) / duration, 1);
+      const from = waypoints[seg];
+      const to = waypoints[seg + 1];
+      const x = from.x + (to.x - from.x) * progress;
+      const y = from.y + (to.y - from.y) * progress;
+      part.setAttribute('transform', `translate(${x}, ${y})`);
+
+      if (progress >= 1) {
+        if (onSegmentReached) onSegmentReached(seg + 1, to.label);
+        seg += 1;
+        segStart = timestamp;
+        if (seg >= segDurations.length) {
+          partAnim = null;
+          return;
+        }
+      }
+
+      partAnim.rafId = requestAnimationFrame(frame);
+    }
+
+    const first = waypoints[0];
+    part.setAttribute('transform', `translate(${first.x}, ${first.y})`);
+    partAnim = { rafId: requestAnimationFrame(frame) };
   }
 
-  function animatePart(from, to, duration) {
-    setMovingPart(true, from.x, from.y, 0);
-    requestAnimationFrame(() => requestAnimationFrame(() => setMovingPart(true, to.x, to.y, duration)));
+  function stopPartAnim() {
+    if (partAnim) {
+      cancelAnimationFrame(partAnim.rafId);
+      partAnim = null;
+    }
+    ui.part.classList.add('hidden');
   }
 
   // IDLE → HABILITADO. S2 is momentary; K1 remains latched until STOP/E-STOP.
@@ -115,10 +164,15 @@
       setState(STATES.HABILITADO, 'T5 lleno: alimentación de nuevas piezas bloqueada.', 'danger');
       return;
     }
-    signals.K1_T4 = true; signals.IFM = true;
+    signals.K1_T4 = true; signals.IFM = false;
     signals.B1_ind = false; signals.B2_cap = false; signals.K3 = false; signals.K2 = false;
-    setState(STATES.PIEZA_EN_CINTA, `T4 detecta pieza ${pieceType} · barrera IFM interrumpida.`, 'ok');
-    animatePart({ x: 315, y: 274 }, { x: 635, y: 274 }, timings.conveyorTime);
+    setState(STATES.PIEZA_EN_CINTA, `T4 recibe pieza ${pieceType} · avanzando hacia barrera IFM.`, 'ok');
+    tweenPart(PATH_METAL.slice(0, 2), [timings.conveyorTime * 0.6], (index, label) => {
+      if (label === 'T4_ifm') {
+        signals.IFM = true;
+        render();
+      }
+    });
     schedule(beginInspection, timings.conveyorTime);
   }
 
@@ -130,7 +184,11 @@
     signals.H1 = signals.B1_ind;
     signals.H2 = signals.B2_cap;
     setState(STATES.INSPECCION, `T2 inspeccionando · B1=${signals.B1_ind ? 'ON' : 'OFF'} · B2=${signals.B2_cap ? 'ON' : 'OFF'}.`);
-    setMovingPart(true, 700, 274, 500);
+    tweenPart(
+      PATH_METAL.slice(1, 4),
+      [timings.conveyorTime * 0.4, timings.inspectionTime - timings.conveyorTime * 0.4],
+      null
+    );
     schedule(classifyPiece, timings.inspectionTime);
   }
 
@@ -143,11 +201,11 @@
     signals.K3 = true; signals.H2 = true;
     setState(STATES.DESCARTE, 'PLÁSTICO detectado · K3 expulsa a bandeja de descarte.', 'warn');
     ui.pusher.classList.add('extended');
-    setMovingPart(true, 770, 325, 650);
+    tweenPart(PATH_PLASTIC.slice(3), [650], null);
     schedule(() => {
       counters.plastic += 1; counters.cycles += 1;
       signals.K3 = false; signals.B2_cap = false;
-      ui.pusher.classList.remove('extended'); setMovingPart(false);
+      ui.pusher.classList.remove('extended'); stopPartAnim();
       finishCycle('Ciclo de descarte finalizado; T3 y T5 no energizados.');
     }, 850);
   }
@@ -156,7 +214,7 @@
   function approveMetal() {
     signals.H1 = true; signals.H2 = false; signals.FC1 = false;
     setState(STATES.MECANIZANDO_AVANCE, 'METAL válido · T3 avanza el cabezal hasta FC2.', 'ok');
-    animatePart({ x: 700, y: 274 }, { x: 985, y: 284 }, 750);
+    tweenPart(PATH_METAL.slice(3, 5), [800], null);
     ui.drill.classList.add('down');
     schedule(beginReturn, timings.pressAdvanceTime);
   }
@@ -172,7 +230,7 @@
   function beginStorage() {
     signals.FC2 = false; signals.FC1 = true; signals.K2 = automatic;
     setState(STATES.ALMACENANDO, automatic ? 'T3-X6 habilita T5 · K2 abre en automático.' : 'T5 habilitada · esperando apertura manual de K2.', automatic ? 'ok' : 'warn');
-    animatePart({ x: 985, y: 284 }, { x: 1190, y: 205 }, 750);
+    tweenPart(PATH_METAL.slice(4), [700], null);
     if (automatic) {
       ui.gate.classList.add('open');
       schedule(storeMetal, timings.storageTime);
@@ -181,7 +239,7 @@
 
   function storeMetal() {
     if (state !== STATES.ALMACENANDO) return;
-    signals.K2 = false; ui.gate.classList.remove('open'); setMovingPart(false);
+    signals.K2 = false; ui.gate.classList.remove('open'); stopPartAnim();
     siloLevel = Math.min(100, siloLevel + 25);
     signals.B1_cap = siloLevel >= 100;
     counters.metal += 1; counters.cycles += 1;
@@ -203,14 +261,14 @@
     if (state === STATES.EMERGENCIA) return;
     cancelCycleTimer();
     signals = makeIdleSignals();
-    setMovingPart(false); ui.drill.classList.remove('down'); ui.pusher.classList.remove('extended'); ui.gate.classList.remove('open');
+    stopPartAnim(); ui.drill.classList.remove('down'); ui.pusher.classList.remove('extended'); ui.gate.classList.remove('open');
     setState(STATES.IDLE, source, 'warn');
   }
 
   function emergencyStop() {
     cancelCycleTimer();
     signals = makeIdleSignals(); signals.H2 = true; signals.B2_tapa = false;
-    setMovingPart(false); ui.drill.classList.remove('down'); ui.pusher.classList.remove('extended'); ui.gate.classList.remove('open');
+    stopPartAnim(); ui.drill.classList.remove('down'); ui.pusher.classList.remove('extended'); ui.gate.classList.remove('open');
     setState(STATES.EMERGENCIA, 'S0 ACTIVADO · parada de categoría 0 · salidas desenergizadas.', 'danger');
   }
 
