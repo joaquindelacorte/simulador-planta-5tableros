@@ -1,6 +1,25 @@
 (() => {
   'use strict';
 
+  /* =================================================================
+     MOTOR PLC — ciclo fijo de 20 ms (acumulador determinista)
+     =================================================================
+     Un PLC real ejecuta su programa en un ciclo fijo (típicamente
+     10-50 ms). El navegador NO garantiza esa cadencia — rAF corre
+     a ~16.67 ms (60 Hz) o mucho menos si la pestaña pierde foco.
+
+     Este motor acumula el tiempo real transcurrido y ejecuta la
+     cantidad exacta de pasos de 20 ms que "debe", independiente
+     del framerate. Las animaciones CSS (visuales) se disparan
+     aparte — no afectan la lógica del PLC.
+
+     El badge muestra "SCAN: 20 ms (configurado)" porque es un
+     parámetro de diseño del PLC simulado, no una medición del
+     repaint del navegador.
+     ================================================================= */
+
+  const PLC_SCAN_MS = 20;   // Período de scan configurado (ms)
+
   const STATES = Object.freeze({
     IDLE: 'IDLE', HABILITADO: 'HABILITADO', PIEZA_EN_CINTA: 'PIEZA_EN_CINTA',
     INSPECCION_INICIAL: 'INSPECCION_INICIAL', DESCARTE_INICIAL: 'DESCARTE_INICIAL',
@@ -8,14 +27,31 @@
     INSPECCION_FINAL: 'INSPECCION_FINAL', PIEZA_OK: 'PIEZA_OK', PIEZA_DEFECTUOSA: 'PIEZA_DEFECTUOSA',
     CICLO_COMPLETO: 'CICLO_COMPLETO', EMERGENCIA: 'EMERGENCIA'
   });
-  const timings = Object.freeze({ conveyorTime: 3000, inspectionTime: 1500, pressAdvanceTime: 2000, pressReturnTime: 1500, finalInspectionTime: 1000, classificationTime: 650 });
+  const timingsMs = Object.freeze({ conveyorTime: 3000, inspectionTime: 1500, pressAdvanceTime: 2000, pressReturnTime: 1500, finalInspectionTime: 1000, classificationTime: 650 });
   const startedAt = Date.now();
   let state = STATES.IDLE;
   let cam1Result = 'CONFORME';
   let cam2Result = 'OK';
-  let cycleTimer = null;
   const counters = { ok: 0, nok: 0, rejected: 0, cycles: 0 };
   let signals = makeIdleSignals();
+
+  /* -- Timer PLC: timers contados en scans -- */
+  let scanCount = 0;
+  let plcTimers = [];
+  let nextTimerId = 0;
+  let plcRunning = false;
+  let lastRafTime = 0;
+  let accumulator = 0;
+  let dirty = true;
+
+  function msToScans(ms) { return Math.ceil(ms / PLC_SCAN_MS); }
+
+  function schedulePlc(callback, delayMs) {
+    const id = ++nextTimerId;
+    plcTimers.push({ targetScan: scanCount + msToScans(delayMs), callback, id });
+    return id;
+  }
+  function cancelAllPlcTimers() { plcTimers = []; }
 
   const $ = (id) => document.getElementById(id);
   const ui = {
@@ -26,7 +62,7 @@
     part: $('movingPart'), drill: $('drillHead'), pusher: $('pusher'), opticalBeam: $('opticalBeam'),
     fillOK: $('fillOK'), fillNOK: $('fillNOK'), countOK: $('countOK'), countNOK: $('countNOK'),
     okCount: $('okCount'), nokCount: $('nokCount'), rejectCount: $('rejectCount'), cycleCount: $('cycleCount'),
-    signalList: $('signalList'), ladder: $('ladderDiagram')
+    signalList: $('signalList'), ladder: $('ladderDiagram'), scanBadge: $('scan-badge')
   };
 
   const signalMeta = [
@@ -61,9 +97,7 @@
     ui.log.prepend(item);
     while (ui.log.children.length > 50) ui.log.lastElementChild.remove();
   }
-  function schedule(fn, delay) { clearTimeout(cycleTimer); cycleTimer = setTimeout(fn, delay); }
-  function cancelCycleTimer() { clearTimeout(cycleTimer); cycleTimer = null; }
-  function setState(next, message, tone = '') { state = next; if (message) log(message, tone); render(); }
+  function setState(next, message, tone = '') { state = next; if (message) log(message, tone); dirty = true; }
   function setMovingPart(visible, x = 0, y = 0, duration = 0) {
     ui.part.style.transition = duration ? `transform ${duration}ms linear` : 'none';
     ui.part.classList.toggle('hidden', !visible);
@@ -82,15 +116,15 @@
     setState(STATES.HABILITADO, 'S2 pulsado · K1 enclavado · línea habilitada.', 'ok');
     ui.start.classList.add('pressed');
     setTimeout(() => ui.start.classList.remove('pressed'), 200);
-    schedule(beginConveyor, 500);
+    schedulePlc(beginConveyor, 500);
   }
   function beginConveyor() {
     if (!signals.K1 || state === STATES.EMERGENCIA) return;
     signals.K1_T4 = true; signals.IFM = true; signals.CAM1_OK = false; signals.CAM1_NOK = false;
     signals.CAM2_OK = false; signals.CAM2_NOK = false; signals.K3 = false;
     setState(STATES.PIEZA_EN_CINTA, 'T4 detecta pieza · barrera IFM interrumpida.', 'ok');
-    animatePart({ x: 315, y: 274 }, { x: 635, y: 274 }, timings.conveyorTime);
-    schedule(beginInitialInspection, timings.conveyorTime);
+    animatePart({ x: 315, y: 274 }, { x: 635, y: 274 }, timingsMs.conveyorTime);
+    schedulePlc(beginInitialInspection, timingsMs.conveyorTime);
   }
   function beginInitialInspection() {
     signals.IFM = false;
@@ -98,7 +132,7 @@
     signals.CAM1_NOK = !signals.CAM1_OK;
     setState(STATES.INSPECCION_INICIAL, 'T2 · Inspección Inicial en curso (CAM1).');
     setMovingPart(true, 700, 274, 500);
-    schedule(classifyInitialPiece, timings.inspectionTime);
+    schedulePlc(classifyInitialPiece, timingsMs.inspectionTime);
   }
   function classifyInitialPiece() { if (signals.CAM1_OK) approveInitialInspection(); else discardInitialPiece(); }
   function discardInitialPiece() {
@@ -106,7 +140,7 @@
     setState(STATES.DESCARTE_INICIAL, 'T2 · pieza NO CONFORME → K3 activo · descarte inicial', 'warn');
     ui.pusher.classList.add('extended');
     setMovingPart(true, 770, 325, 650);
-    schedule(() => {
+    schedulePlc(() => {
       counters.rejected += 1; counters.cycles += 1;
       signals.K3 = false; signals.CAM1_NOK = false;
       ui.pusher.classList.remove('extended'); setMovingPart(false);
@@ -118,27 +152,27 @@
     setState(STATES.MECANIZANDO_AVANCE, 'T2 · Cámara 1: pieza CONFORME → MATERIAL_VALIDO habilitado', 'ok');
     animatePart({ x: 700, y: 274 }, { x: 985, y: 284 }, 750);
     ui.drill.classList.add('down');
-    schedule(beginReturn, timings.pressAdvanceTime);
+    schedulePlc(beginReturn, timingsMs.pressAdvanceTime);
   }
   function beginReturn() {
     signals.FC2 = true;
     setState(STATES.MECANIZANDO_RETROCESO, 'FC2 activo · mecanizado completo · retroceso ordenado.', 'ok');
     ui.drill.classList.remove('down');
-    schedule(beginFinalInspection, timings.pressReturnTime);
+    schedulePlc(beginFinalInspection, timingsMs.pressReturnTime);
   }
   function beginFinalInspection() {
     signals.FC2 = false; signals.FC1 = true;
     setState(STATES.INSPECCION_FINAL, 'T3-X6 → T5 · Inspección final en curso (CAM2).');
     animatePart({ x: 985, y: 284 }, { x: 1180, y: 175 }, 750);
-    schedule(classifyFinalPiece, timings.finalInspectionTime);
+    schedulePlc(classifyFinalPiece, timingsMs.finalInspectionTime);
   }
   function classifyFinalPiece() {
     const isOk = cam2Result === 'OK';
     signals.CAM2_OK = isOk; signals.CAM2_NOK = !isOk;
     const destination = isOk ? { x: 1137, y: 260 } : { x: 1225, y: 260 };
-    setMovingPart(true, destination.x, destination.y, timings.classificationTime);
-    render();
-    schedule(() => completeFinalClassification(isOk), timings.classificationTime);
+    setMovingPart(true, destination.x, destination.y, timingsMs.classificationTime);
+    dirty = true;
+    schedulePlc(() => completeFinalClassification(isOk), timingsMs.classificationTime);
   }
   function completeFinalClassification(isOk) {
     setMovingPart(false);
@@ -162,22 +196,22 @@
   function finishCycle(message, tone = 'ok', finalState = STATES.CICLO_COMPLETO) {
     signals.IFM = false; signals.K1_T4 = false; signals.CAM1_OK = false; signals.CAM1_NOK = false;
     setState(finalState, message, tone);
-    schedule(() => {
+    schedulePlc(() => {
       if (!signals.K1 || state === STATES.EMERGENCIA) return;
       signals.CAM2_OK = false; signals.CAM2_NOK = false;
       setState(STATES.HABILITADO, 'Ciclo rearmado · línea lista para siguiente pieza.', 'ok');
-      schedule(beginConveyor, 1200);
+      schedulePlc(beginConveyor, 1200);
     }, 900);
   }
 
   function stopSystem(source = 'S1 STOP pulsado · autorretención K1 liberada.') {
     if (state === STATES.EMERGENCIA) return;
-    cancelCycleTimer(); signals = makeIdleSignals(); setMovingPart(false);
+    cancelAllPlcTimers(); signals = makeIdleSignals(); setMovingPart(false);
     ui.drill.classList.remove('down'); ui.pusher.classList.remove('extended');
     setState(STATES.IDLE, source, 'warn');
   }
   function emergencyStop() {
-    cancelCycleTimer(); signals = makeIdleSignals(); signals.H2 = true; setMovingPart(false);
+    cancelAllPlcTimers(); signals = makeIdleSignals(); signals.H2 = true; setMovingPart(false);
     ui.drill.classList.remove('down'); ui.pusher.classList.remove('extended');
     setState(STATES.EMERGENCIA, 'S0 ACTIVADO · parada de categoría 0 · salidas desenergizadas.', 'danger');
   }
@@ -185,6 +219,43 @@
     if (state !== STATES.EMERGENCIA) return log('RESET ignorado: no hay emergencia activa.', 'warn');
     signals = makeIdleSignals();
     setState(STATES.IDLE, 'S0 liberado · sistema rearmado en IDLE.', 'ok');
+  }
+
+  /* ======= PLC SCAN — un paso de 20 ms lógico ======= */
+  function plcScan() {
+    scanCount++;
+    const due = [];
+    const remaining = [];
+    for (const t of plcTimers) {
+      if (scanCount >= t.targetScan) due.push(t);
+      else remaining.push(t);
+    }
+    plcTimers = remaining;
+    for (const t of due) t.callback();
+    dirty = true;
+  }
+
+  /* ======= LOOP PRINCIPAL — acumulador determinista ======= */
+  function mainLoop(now) {
+    if (!plcRunning) return;
+    if (lastRafTime === 0) lastRafTime = now;
+    const dt = Math.min(now - lastRafTime, 200);
+    lastRafTime = now;
+    accumulator += dt;
+    while (accumulator >= PLC_SCAN_MS) {
+      accumulator -= PLC_SCAN_MS;
+      plcScan();
+    }
+    if (dirty) { render(); dirty = false; }
+    requestAnimationFrame(mainLoop);
+  }
+
+  function startPlcEngine() {
+    if (plcRunning) return;
+    plcRunning = true;
+    lastRafTime = 0;
+    accumulator = 0;
+    requestAnimationFrame(mainLoop);
   }
 
   function renderSignals() {
@@ -232,6 +303,7 @@
     ui.okCount.textContent = counters.ok; ui.nokCount.textContent = counters.nok;
     ui.rejectCount.textContent = counters.rejected; ui.cycleCount.textContent = counters.cycles;
     ui.start.disabled = emergency || running; ui.stop.disabled = emergency || !running; ui.reset.disabled = !emergency;
+    if (ui.scanBadge) ui.scanBadge.textContent = 'SCAN: ' + PLC_SCAN_MS + ' ms (configurado)';
     renderSignals(); renderLadder();
   }
 
@@ -268,6 +340,8 @@
 
   initializePanels();
   log('Simulador inicializado · 0V común verificado.', 'ok');
+  log('Motor PLC arrancado · ciclo fijo ' + PLC_SCAN_MS + ' ms · acumulador determinista.', 'ok');
   log('Planta en IDLE · pulse START para enclavar K1.');
   render();
+  startPlcEngine();
 })();
